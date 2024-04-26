@@ -1,4 +1,13 @@
 
+# V1
+# 1. Use the ups map to derive the stream network (apply a threshold)
+# 2. Identify merging points in the network (will work as discharge points)
+# 3. For each discharge point, draw a catchment using the ldd map
+# 4. Merge all catchments
+
+# This script has pieces of another used for Chiapas. It includes a 
+# second pass to draw catchments in areas that the first pass missed.
+
 
 
 library(tidyverse)
