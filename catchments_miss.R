@@ -4,7 +4,6 @@
 #    location within each HydroBASINS catchment with the highest accumulation (ups).
 # 2. For each discharge point, draw a catchment using the ldd map
 # 3. Merge all catchments
-# 4. Repeat steps above for areas not covered in the first pass
 
 
 
