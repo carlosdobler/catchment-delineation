@@ -19,6 +19,7 @@ The script in this repo conducts a test on the Mississippi River.
 library(tidyverse)
 library(stars)
 
+sf_use_s2(F)
 
 # load data
 r <- 
@@ -58,9 +59,9 @@ ggplot() +
             mutate(a = as.character(sample(20, nrow(.), replace = T))) %>% 
             select(a), 
           aes(fill = a),
-          lwd = 0.15,
-          color = "black",
-          alpha = 0.5,
+          # lwd = 0.15,
+          color = NA, #"black",
+          alpha = 0.75,
           show.legend = F) +
   
   geom_sf(data = stream_net_miss,
