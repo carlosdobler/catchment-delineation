@@ -1,0 +1,77 @@
+---
+title: "Catchment delineation"
+format: gfm
+---
+
+### Context 
+We use the [CWatM model](https://cwatm.iiasa.ac.at/index.html) to evaluate hydrological risks. Several model outputs need to be aggregated at a catchment level. To obtain the catchments, we could use an existing product - like HydroSHEDS's [HydroBASINS product](https://www.hydrosheds.org/products/hydrobasins). The problem is that this product does not align perfectly with the layers that CWatM uses as inputs, specifically the local drainage direction and upstream (accumulated) flow maps. Because they don't align, when overlaid with these maps, HydroBASINS catchments present "false" inflow and/or outflow points.
+
+### Objective
+Delineate catchments with the same layers that CWatM uses as inputs. This will ensure these catchments will be consistent with CWatM outputs and will not present false inflow or outflow points. Catchments should have roughly the same size and spatial configuration as HydroBASINS ones.
+
+The script in this repo conducts a test on the Mississippi River.
+
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(stars)
+
+
+# load data
+r <- 
+  read_rds("/mnt/pers_disk/miss_wsheds/report_data.rds")
+
+catchments <- 
+  r[[1]]
+
+catchments_miss <- 
+  catchments %>% 
+  mutate(f = map_lgl(origins, function(x){631 %in% x})) %>%
+  filter(f == T)
+
+# discharge_pts <- 
+#   r[[2]]
+
+stream_net <- 
+  r[[3]]
+
+stream_net_miss <- 
+  catchments_miss %>% 
+  summarize() %>% 
+  st_intersection(stream_net)
+
+# HydroBASINS <- 
+#   r[[4]]
+
+```
+
+
+
+```{r}
+#| echo: false
+ggplot() +
+  geom_sf(data = 
+            catchments_miss %>%
+            mutate(a = as.character(sample(20, nrow(.), replace = T))) %>% 
+            select(a), 
+          aes(fill = a),
+          lwd = 0.15,
+          color = "black",
+          alpha = 0.5,
+          show.legend = F) +
+  
+  geom_sf(data = stream_net_miss,
+          aes(linewidth = ORD_STRA),
+          show.legend = F) +
+  
+  colorspace::scale_fill_discrete_qualitative("Set3") +
+  scale_linewidth_continuous(range = c(0.2, 1)) +
+  
+  theme_void()
+
+
+```
+

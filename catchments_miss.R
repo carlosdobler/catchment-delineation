@@ -1,14 +1,24 @@
 
-# V3.1
+# V3.2
 # 1. Instead of using a stream network to obtain discharge points, identify the
 #    location within each HydroBASINS catchment with the highest accumulation (ups).
 # 2. For each discharge point, draw a catchment using the ldd map
 # 3. Merge all catchments
+# 4. Repeat steps above for areas not covered in the first pass
+
+
+# Why 2 passes? Because we are forcing discharge points to be inside HydroBASINS
+# basins, there are some areas that flow towards a distant discharge point, but they
+# don't have their own (nearby) discharge point (probably due to HydroBASINS being 
+# direction delineated with a different ldd map). These areas thus remain "orphan". 
+# The solution is to find a discharge point within them and re-run the process. At 
+# the end, both sets of catchments are merged, and the flow hierarchy correctly mapped.
 
 
 
 # run this the first time the {qgisprocess} package is used (before anything else): 
 # options(qgisprocess.path = '/usr/bin/qgis_process.bin')
+
 
 
 library(tidyverse)
@@ -63,7 +73,7 @@ ldd <-
                          ldd == 0 ~ -1))
 
 # save for GRASS
-# write_stars(ldd, paste0(d, "/ldd.tif"), type = "Int16")
+write_stars(ldd, paste0(d, "/ldd.tif"), type = "Int16")
 
 # upstream accumulated flow
 ups <- 
@@ -71,80 +81,10 @@ ups <-
   read_ncdf() %>% 
   st_crop(aoi_ext)
 
-# dem (not needed in this version)
-# dem <-
-#   paste0(d, "global_files/dem.nc") %>% 
-#   read_ncdf() %>%
-#   st_crop(aoi_ext)
 
 
 
-
-# STEP 1b: LAND MASK
-
-# land <-
-#   paste0(d_misc, "ne_50m_land/") %>% 
-#   st_read() %>% 
-#   mutate(a = 1) %>% 
-#   select(a) %>% 
-#   st_rasterize(ldd %>% mutate(a = NA) %>% select(a)) %>% 
-#   st_warp(ldd)
-# 
-# lakes <-
-#   paste0(d_misc, "ne_50m_lakes/") %>% 
-#   st_read() %>% 
-#   filter(scalerank == 0,
-#          featurecla != "Reservoir") %>% 
-#   mutate(b = 1) %>% 
-#   select(b) #%>% 
-#   # st_rasterize(ldd %>% mutate(a = NA) %>% select(a)) %>% 
-#   # st_warp(ldd)
-#   
-# land_mask <-
-#   c(land, lakes) %>%
-#   mutate(a = if_else(is.na(a), 0, 1),
-#          b = if_else(is.na(b), 1, 0),
-#          a = if_else(a == 0 | b == 0, NA, 1)) %>%
-#   select(a)
-
-
-
-
-
-
-# STEP 2: PREPARE STREAM NETWORK -----------------------------------------------
-
-# HydroRIVERS stream network is used to force discharge 
-# points to align with the river
-
-# import stream network (for North Am)
-network_all <- 
-  paste0(d_misc, "HydroRIVERS_v10_na_shp/HydroRIVERS_v10_na_shp") %>% 
-  st_read() %>% 
-  st_crop(ldd)
-
-# subset based on Strahler order
-network_stra <- 
-  network_all %>% 
-  filter(ORD_STRA >= 4) %>% 
-  group_by(MAIN_RIV) %>% 
-  summarise() %>% 
-  mutate(r = 1) %>% 
-  select(r)
-
-# # rasterize and extract ups values
-# ups_network <- 
-#   network_stra  %>% 
-#   st_rasterize(ldd %>% mutate(a = NA) %>% select(a)) %>% 
-#   st_warp(ldd) %>% 
-#   c(ups) %>% 
-#   mutate(ups = if_else(is.na(r), NA, ups)) %>% 
-#   select(ups)
-
-
-
-
-# STEP 3: PREPARE HYDROBASINS -------------------------------------------------
+# STEP 2: PREPARE HYDROBASINS -------------------------------------------------
 
 # level 6
 basins <- 
@@ -155,10 +95,11 @@ basins <-
          area = st_area(.) %>% units::drop_units()) %>% 
   select(HYBAS_ID, area)
 
-# remove very small basins
+# remove small basins
+# (areas removed will be covered by 2nd pass)
 basins <- 
   basins %>% 
-  filter(area >= 1e9)
+  filter(area > 1e9)
   
 # rasterize  
 basins_r <-
@@ -183,66 +124,20 @@ identical(basins$HYBAS_ID %>%
 
 
 
-# STEP 4: OBTAIN DISCHARGE POINTS ---------------------------------------------
-
-# tb_0 <- 
-#   c(basins_r, 
-#     ups_network %>% setNames("ups_network"),
-#     ups %>% setNames("ups_whole")) %>% 
-#   as_tibble() %>% 
-#   filter(!is.na(id)) %>% 
-#   
-#   # identify basins without stream network in them
-#   group_by(id) %>% 
-#   mutate(flag = all(is.na(ups_network))) %>% 
-#   ungroup()
-# 
-# 
-# # process basins WITH stream network
-# tb_1 <-
-#   tb_0 %>%
-#   filter(flag == F) %>% 
-#   group_by(id) %>% # 700
-#   mutate(ups_max = max(ups_network, na.rm = T)) %>% 
-#   filter(ups_network == ups_max) %>%
-#   
-#   # remove duplicates (> 1 point sharing the same max ups)
-#   mutate(d = duplicated(ups_max)) %>% 
-#   ungroup() %>% 
-#   filter(d == F) # 700
-# 
-# # process basins WITHOUT stream network
-# # (use the original (whole) ups map to obtain max ups) 
-# tb_2 <-
-#   tb_0 %>%
-#   filter(flag == T) %>% 
-#   group_by(id) %>% # 23
-#   mutate(ups_max = max(ups_whole, na.rm = T)) %>% 
-#   filter(ups_whole == ups_max) %>%
-#   mutate(d = duplicated(ups_max)) %>% # remove duplicates 
-#   ungroup() %>% 
-#   filter(d == F) # 23
-# 
-# # generate discharge points (sf obj)
-# disch_pts <- 
-#   bind_rows(tb_1, tb_2) %>% 
-#   select(lon, lat, id) %>% 
-#   st_as_sf(coords = c("lon", "lat")) %>% 
-#   st_set_crs(4326)
 
 
+# STEP 3: OBTAIN DISCHARGE POINTS: 1ST PASS ------------------------------------
 
-# ALTERNATIVE APPROACH (simpler)
 # Use the original ups map (not constrained by the stream network)
 
-disch_pts <-
+disch_pts_1 <-
   c(basins_r,
     ups %>% setNames("ups_whole")) %>%
   as_tibble() %>%
   filter(!is.na(HYBAS_ID)) %>%
   group_by(HYBAS_ID) %>%
-  # mutate(ups_max = max(ups_whole, na.rm = T)) %>% 
-  mutate(ups_max = quantile(ups_whole, 0.99, na.rm = T, type = 1)) %>%
+  mutate(ups_max = max(ups_whole, na.rm = T)) %>%
+  # mutate(ups_max = quantile(ups_whole, 0.99, na.rm = T, type = 1)) %>%
   filter(ups_whole == ups_max) %>%
   mutate(d = duplicated(ups_max)) %>% 
   filter(d != T) %>%
@@ -253,8 +148,6 @@ disch_pts <-
   st_as_sf(coords = c("lon", "lat")) %>%
   st_set_crs(4326)
 
-# This approach would keep everything more consistent.
-
 
 # is the number of discharge points the same  
 # as HydroBASINS basins?
@@ -263,23 +156,117 @@ identical(basins$HYBAS_ID %>%
             unique() %>% 
             length(),
           
-          disch_pts$id %>%  
+          disch_pts_1$id %>%  
             na.omit() %>% 
             unique() %>% 
             length())
 
 
 
-# STEP 5: DRAW CATCHMENTS ------------------------------------------------------
+# STEP 4: DRAW CATCHMENTS: 1ST PASS -------------------------------------------
 
 # draw a catchment for each point
 
-catchments <- 
-  future_map(disch_pts$id, function(i) { # run in parallel
+catchments_1 <- 
+  future_map(disch_pts_1$id, function(i) { # run in parallel
     
     # select discharge pt
     outlet <- 
-      disch_pts %>% 
+      disch_pts_1 %>% 
+      filter(id == i)
+    
+    # draw catchment
+    catch <- 
+      qgis_run_algorithm("grass7:r.water.outlet",
+                         input = paste0(d, "ldd.tif"), # ldd map previously saved
+                         coordinates = 
+                           outlet %>% 
+                           st_coordinates() %>% 
+                           as.vector() %>% 
+                           str_flatten(",")) %>% 
+      suppressMessages()
+      
+    # catchment polygon
+    p <- 
+      catch$output %>% 
+      read_stars() %>% 
+      st_as_sf(as_points = F, merge = F) %>% 
+      summarize() %>%
+      mutate(idx = i) %>% # assign id
+      select(idx)
+    
+    return(p)
+    
+  })
+
+
+
+
+# STEP 5: IDENTIFY UNCOVERED REGIONS ------------------------------------------
+
+catchments_1_m <-
+  catchments_1 %>% 
+  bind_rows() %>%
+  st_set_precision(1e6) %>% # avoid GEOS error
+  st_intersection() %>% # merge pols
+  st_collection_extract("POLYGON") %>% 
+  st_join(disch_pts_1) %>% # overlay with disch pts
+  filter(!is.na(id)) # remove orphan regions
+
+uncov_reg <- 
+  catchments_1_m %>% 
+  mutate(a = 0) %>% 
+  select(a) %>% 
+  st_rasterize(ldd %>% mutate(a = 1) %>% select(a)) %>% 
+  st_warp(ldd) %>% 
+  mutate(a = if_else(a == 0, NA, 1))
+
+# assign unique id to each polygon
+uncov_reg <-
+  uncov_reg %>% 
+  st_as_sf(as_points = F, merge = T) %>% 
+  mutate(area = st_area(.) %>% units::drop_units()) %>% 
+  filter(area > 1e8) %>%
+  mutate(id = row_number()) %>% 
+  select(id) %>% 
+  st_rasterize(ldd %>% mutate(a = NA) %>% select(a)) %>% 
+  st_warp(ldd)
+
+
+# STEP 6: OBTAIN DISCHARGE POINTS: 2ND PASS ------------------------------------
+
+disch_pts_2 <-
+  c(uncov_reg,
+    ups %>% setNames("ups_whole")) %>%
+  as_tibble() %>%
+  filter(!is.na(id)) %>%
+  group_by(id) %>%
+  mutate(ups_max = max(ups_whole, na.rm = T)) %>%
+  filter(ups_whole == ups_max) %>%
+  mutate(d = duplicated(ups_max)) %>% 
+  filter(d != T) %>%
+  ungroup() %>%
+  select(lon, lat) %>%
+  
+  # id numbers to continue from disch_pts_1
+  mutate(id = row_number() + nrow(disch_pts_1)) %>% 
+  as.data.frame() %>% 
+  st_as_sf(coords = c("lon", "lat")) %>%
+  st_set_crs(4326)
+
+
+
+
+# STEP 7: DRAW CATCHMENTS: 2ND PASS -------------------------------------------
+
+# draw a catchment for each point
+
+catchments_2 <- 
+  future_map(disch_pts_2$id, function(i) { # run in parallel
+    
+    # select discharge pt
+    outlet <- 
+      disch_pts_2 %>% 
       filter(id == i)
     
     # draw catchment
@@ -294,22 +281,52 @@ catchments <-
       suppressMessages()
     
     # catchment polygon
-    a <- 
+    p <- 
       catch$output %>% 
       read_stars() %>% 
       st_as_sf(as_points = F, merge = F) %>% 
-      summarize()
+      summarize() %>%
+      mutate(idx = i) %>% # assign id
+      select(idx)
     
-    # assign id
-    a <- 
-      a %>%
-      mutate(id = i) %>% 
-      select(id)
-    
-    return(a)
+    return(p)
     
   })
 
+
+
+
+# STEP 8: MERGE EVERYTHING ----------------------------------------------------
+
+catchments_f <- 
+  bind_rows(catchments_1, catchments_2) %>%
+  st_set_precision(1e6) %>% # avoid GEOS error
+  st_intersection() %>% # merge pols
+  st_collection_extract("POLYGON")
+
+disch_pts_f <- 
+  bind_rows(disch_pts_1, disch_pts_2)
+
+
+# fix id (messed up when intersecting)
+catchments_ff <- 
+  catchments_f %>%
+  st_join(disch_pts_f) %>% 
+  select(id, everything(), -idx) %>% 
+  filter(!is.na(id))
+
+
+
+
+
+uncov_reg <- 
+  catchments_1 %>% 
+  transpose() %>% 
+  pluck("r") %>% 
+  {do.call(c, c(., along = "d"))} #%>% # merge all maps
+  
+uncov_reg %>% 
+  st_apply(c(1,2), function(x) {if_else(all(is.na(x)), 1, 0)}) -> a
 
 # merge all catchments
 
@@ -331,64 +348,13 @@ catchments_ff <-
 
 
 
-catchments_ff <- 
-  catchments_f %>% 
-  mutate(id = row_number())
-
-
- catchments_ff <- 
-  catchments_f %>%
-  st_make_valid() %>%
-  filter(!st_is_empty(.))
-
-
-sf_use_s2(F)
-catchments_fff <- 
-  catchments_f[which(map_dbl(st_contains(catchments_f, disch_pts), length) > 0), ] # 723
-
-
-
-
-
-
-sf_use_s2(F)
-st_within(disch_pts, st_make_valid(catchments_ff))
-which(map_dbl(st_contains(catchments_f, disch_pts), length) > 0)
-  
-
-catchments_ff %>% 
-  mutate(a = st_contains(catchments_ff, disch_pts))
-
-
-
-sf_use_s2(F)
-catchments_ff %>%
-  mutate(a = st_area(.) %>% units::drop_units()) %>% 
-  filter(a > 1) %>%
-  arrange(a) %>% 
-  .[1:4,] %>% select(2) -> foo
-
-catchments_ff <- 
-  catchments_f %>% 
-  mutate(id2 = row_number())
 
 
 # save everything for report
 
-miss_catch <- 
-  catchments_ff %>%
-  slice_max(n.overlaps) %>% 
-  pull(origins) %>% 
-  unlist()
 
-
-catchments_ff %>%
-  filter(id2 %in% miss_catch) %>% 
-  select(id2) %>% 
-  mapview::mapview()
-
-write_rds(list(catchments_f,
-               disch_pts,
+write_rds(list(catchments_ff,
+               disch_pts_f,
                network_all %>%
                  filter(ORD_STRA >= 4) %>% 
                  select(ORD_STRA),
@@ -398,14 +364,4 @@ write_rds(list(catchments_f,
 
 
 
-catchments_ff %>%
-  mutate(a = st_area(.) %>% units::drop_units()) %>% 
-  # arrange(a)
-  filter(a > 50000) -> foo
 
-foo %>% 
-  select(-id) %>% 
-  as_tibble(rownames = "id") %>% 
-  st_as_sf() %>% 
-  select(-a) %>% #pull(id)
-  mutate(id = as.numeric(id)) %>% pull(id)
