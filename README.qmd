@@ -59,8 +59,8 @@ ggplot() +
             mutate(a = as.character(sample(20, nrow(.), replace = T))) %>% 
             select(a), 
           aes(fill = a),
-          # lwd = 0.15,
-          color = NA, #"black",
+          lwd = 0.15,
+          color = "grey40",
           alpha = 0.75,
           show.legend = F) +
   
