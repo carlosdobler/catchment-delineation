@@ -7,11 +7,11 @@
 # 4. Repeat steps above for areas not covered in the first pass
 
 
-# Why 2 passes? Because we are forcing discharge points to be inside HydroBASINS
+# Why 2 passes? Since we are forcing discharge points to be inside HydroBASINS
 # basins, there are some areas that flow towards a distant discharge point, but they
 # don't have their own (nearby) discharge point (probably due to HydroBASINS being 
-# direction delineated with a different ldd map). These areas thus remain "orphan". 
-# The solution is to find a discharge point within them and re-run the process. At 
+# delineated with a different ldd map). These areas thus remain "orphan". The 
+# solution is to find a discharge point within them and re-run the process. At 
 # the end, both sets of catchments are merged, and the flow hierarchy correctly mapped.
 
 
@@ -163,6 +163,7 @@ identical(basins$HYBAS_ID %>%
 
 
 
+
 # STEP 4: DRAW CATCHMENTS: 1ST PASS -------------------------------------------
 
 # draw a catchment for each point
@@ -224,11 +225,9 @@ uncov_reg <-
 # assign unique id to each polygon
 uncov_reg <-
   uncov_reg %>% 
-  st_as_sf(as_points = F, merge = T) %>% 
-  mutate(area = st_area(.) %>% units::drop_units()) %>% 
-  filter(area > 1e8) %>%
+  st_as_sf(as_points = F, merge = T, connect8 = T) %>% 
   mutate(id = row_number()) %>% 
-  select(id) %>% 
+  select(id) %>%
   st_rasterize(ldd %>% mutate(a = NA) %>% select(a)) %>% 
   st_warp(ldd)
 
@@ -314,38 +313,6 @@ catchments_ff <-
   st_join(disch_pts_f) %>% 
   select(id, everything(), -idx) %>% 
   filter(!is.na(id))
-
-
-
-
-
-uncov_reg <- 
-  catchments_1 %>% 
-  transpose() %>% 
-  pluck("r") %>% 
-  {do.call(c, c(., along = "d"))} #%>% # merge all maps
-  
-uncov_reg %>% 
-  st_apply(c(1,2), function(x) {if_else(all(is.na(x)), 1, 0)}) -> a
-
-# merge all catchments
-
-# sf_use_s2(T) 
-catchments_f <-
-  catchments %>% 
-  bind_rows() %>%
-  st_set_precision(1e6) %>% 
-  st_intersection() %>%
-  st_collection_extract("POLYGON")
-
-# fix id (messed up when intersecting)
-catchments_ff <- 
-  catchments_f %>% 
-  select(-id) %>% 
-  st_join(disch_pts) %>% 
-  select(id, everything()) %>% 
-  filter(!is.na(id))
-
 
 
 
